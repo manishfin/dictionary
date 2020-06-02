@@ -24,32 +24,68 @@ const shuffle = (array) => {
     return array;
 };
 
-route.get('/', async (req, res) => {
+
+const getMatchWords = (chars, count) => {
+    return Promise.resolve(Word.aggregate([
+        {
+            $match: { $expr: { $in: ["$start", chars ] }}
+        },
+        {
+            $sample: { size: count }
+        },
+    ], (err, matchDocs) => {
+        if (err) return [];
+        else return matchDocs;
+    }));
+}
+
+const getUnMatchWords = (count) => {
+    return Promise.resolve(Word.aggregate([
+        {
+            $sample: { size: count }
+        },
+    ], (err, unmatchDocs) => {
+        if (err) return [];
+        else return unmatchDocs;
+    }));
+}
+
+const getRandom = (array, count) => {
+    if (array.length <= count) return array;
+    const result = [];
+    const track = {};
+    for(let i=0; i<count; i++) {
+        const index = Math.floor(Math.random()*(i+1));
+        if (!track[index]) {
+            result.push(array[index]);
+            track[index] = 1;
+        }
+        else {
+            i -= 1;
+        }
+    }
+
+    return result;
+  };
+
+route.get('/', (req, res) => {
     let { chars, count } = req.body;
+    console.log(chars);
     const maxWordCount = Number.isInteger(count) ? count : 100;
     if (!chars) chars = [];
     chars = chars.filter(char => char.toUpperCase() != char.toLowerCase()); // filter special chars
     chars = [...new Set(chars)]; // remove duplicate
-    await Word.aggregate([
-        { $group: { // group into matched and unmatched words
-            _id: {
-                $cond: [ { $in: ["$start", chars ] }, 1, 0]
-            },
-            words: { $push: "$word" },
-        }},
-    ], (err, groups) => {
-        if (err) res.send('Error!');
-        else {
-            // take higher probability of getting matched data
-            const matchWordCount = chars.length ? Math.floor((40 + chars.length * 60/26) * maxWordCount / 100) : 0;
-            const data = groups.map((group) => {
-                const words = shuffle(group.words);
-                if (group.id) return words.slice(0, matchWordCount);
-                return words.slice(0, maxWordCount - matchWordCount);
-            });
-            res.json(data.flat());
-        };
-    });
+    const matchWordCount = chars.length ? Math.floor((40 + chars.length * 60/26) * maxWordCount / 100) : 0;
+    return Promise.all([getMatchWords(chars, matchWordCount), getUnMatchWords(maxWordCount - matchWordCount)])
+        .then((docs) => {
+            // console.log(docs);
+            const words1 = docs[0].map((doc) => doc.word);
+            const words2 = docs[1].map((doc) => doc.word);
+            const words = words1.concat(words2);
+            // console.log(words);
+            // console.log(shuffle(words, maxWordCount));
+            res.json(shuffle(words, maxWordCount));
+        });
   });
 
 module.exports = route;
